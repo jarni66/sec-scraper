@@ -1,5 +1,0 @@
-pyarrow
-fastparquet
-pandas
-beautifulsoup4
-
