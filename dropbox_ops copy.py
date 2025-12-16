@@ -9,28 +9,16 @@ class DropboxManager:
     """
     A wrapper class for Dropbox API v2 operations.
     Covers: CRUD, Listing (Recursive & Non-Recursive), and Stream Uploading.
-    Now supports Long-Lived Sessions via Refresh Tokens.
     """
 
-    def __init__(self, app_key, app_secret, refresh_token):
-        """
-        Initialize connection to Dropbox using a Refresh Token.
-        This connection will effectively never expire.
-        """
+    def __init__(self, access_token):
+        """Initialize connection to Dropbox."""
         try:
-            # Initialize with OAuth flow credentials
-            self.dbx = dropbox.Dropbox(
-                app_key=app_key,
-                app_secret=app_secret,
-                oauth2_refresh_token=refresh_token
-            )
-            
-            # Check if credentials are valid by getting current account info
+            self.dbx = dropbox.Dropbox(access_token)
             account = self.dbx.users_get_current_account()
             print(f"Connected to Dropbox as: {account.name.display_name}")
-            
         except AuthError as e:
-            print("Error: Invalid Credentials (Check Key, Secret, or Refresh Token)")
+            print("Error: Invalid Access Token")
             raise e
 
     # ==========================================
@@ -55,13 +43,14 @@ class DropboxManager:
                 for entry in entries:
                     if isinstance(entry, dropbox.files.FileMetadata):
                         # Extract folder name from path (e.g., /Root/DateFolder/File -> DateFolder)
+                        # Dropbox always uses forward slashes
                         path_parts = entry.path_display.split('/')
                         
                         # The last part is filename, second to last is the folder name
                         folder_name = path_parts[-2] if len(path_parts) > 1 else ""
 
                         files_data.append({
-                            "folder_name": folder_name,
+                            "folder_name": folder_name,  # <--- Added this field
                             "file_name": entry.name,
                             "path_display": entry.path_display,
                             "size_bytes": entry.size,
@@ -107,7 +96,7 @@ class DropboxManager:
             print(f"Error saving CSV: {e}")
 
     # ==========================================
-    # 2. OTHER METHODS
+    # 2. OTHER METHODS (Unchanged)
     # ==========================================
 
     def list_immediate_contents(self, folder_path):
@@ -147,12 +136,6 @@ class DropboxManager:
             print(f"Created folder: {meta.metadata.name}")
             return meta
         except ApiError as e:
-            # It's common for threads to try creating the same folder at the same time
-            # We catch it silently here if it already exists
-            if isinstance(e.error, dropbox.files.CreateFolderError) and \
-               e.error.is_path() and e.error.get_path().is_conflict():
-                # print(f"Folder already exists: {dropbox_path}")
-                return None
             print(f"Folder creation issue: {e}")
             return None
 
@@ -160,8 +143,6 @@ class DropboxManager:
         try:
             if hasattr(file_bytes, 'read'): data = file_bytes.read()
             else: data = file_bytes
-            
-            # mode=overwrite handles both create and update
             meta = self.dbx.files_upload(data, dropbox_path, mode=dropbox.files.WriteMode("overwrite"))
             return meta
         except ApiError as e:
@@ -172,16 +153,11 @@ class DropboxManager:
 # EXAMPLE USAGE
 # ==========================================
 if __name__ == "__main__":
-    # YOU MUST REPLACE THESE WITH YOUR VALUES
-    APP_KEY = "YOUR_APP_KEY"
-    APP_SECRET = "YOUR_APP_SECRET"
-    REFRESH_TOKEN = "YOUR_REFRESH_TOKEN" 
+    # Replace with your token
+    TOKEN = "sl.u.AGLdlD4es_-S9KxBecFkl9zRYZ99dK_lUr0cHiDFvq3_vQ8um-o4MAr_oH6iPjnMJUSIN3b3qWYPZo2v5UHnsUsY2MIUdk-OehgZvgTtigk481YjnGwBlbeW5YCtDeMegyqdo-CctiDu9IiVp3iCFMZ0hFjI7pGBPQ4ZF2lEOyLeMb-VPgi2Q7zYEDOU-VnTKHaPJ27E3ra8mZORHhXN2VGs0_3QRyT4us4Prxe8tYsMaAkugN1-3zqEaExNRGFIG4p77IBatgRYw6BJazgffM2nB8iZMubuRHyEylJdAQEC2ZqLZYeycWnqEllGJEn3gW2io6juzcCZ5vltb1-yhOTJUbzCeSVOpO5DSJqT_M66S2xDG3yYh74SwATlp4lOm9kzo3_kjhi2PXtWwcJdWGEZwD0tWO_eoc2MZ_fm6Bk2-BSX8kwfBvWqss4MDwlwlhJx6yTv-npM9tu6Qj1L3kSYfiONxHMi-qqJNdiYC7EopVAL8fpnss5VYJvuWssMm3LZwPxbUsytKNbVhxVX_DVOyq6lTH3gWKo1EQmzHqSQc_JsyCp0-WriZCvobDYgBSsGB--_ocr1YP7tcY0Oq5zlfuQgxJrrVdFS2k7tTT_493g-yH-tqTcTPqcoub2qKVs0eGXoByEwC8wZlv5Gzrh4heZJFFsTNNsHkLRvsDqjrogiNZdDSnezO9YzgZDq2RIt0lzBy3rIqNsTaQKDa2PzTBxOkHw8BYZ7IuJbUPwpCI3v4f1ZwJi9udtZUE3zTA7W7hNDwsM0jyqyPvSMREcM_iOtddV0_aWHbmqeukc-ZhXoGHsmwbfbTE2FrMrbQJt23YasiWsDFgV1rJc3lje1ZHOAuaJBPqaeiyQ6IM5QRAaQEQKmcGZord5ZOigRftaRs7EHafz8qxQvLh-GT8gRdZWUhv_dmX2FZpav0boJgouXIPZ3akTYXJD6oU66rHCrhu7fcttE-WrtSMcONfG05adhWFqn7HZqMfaA-53J6fyEnyXlMbaGqYQc454BBfmTF1NvLiME9dLL9xZWc1ZiFcb02O-n2iEqY268IS2NkzcIOVS_I420c2sPp3gTmA8i9Ox8eYV1vILufPHSSIZZvKPR96T_FBZPgA54KQV0x2-hgSygiZIFpzc6kPbCH0RbqodZKNjaffJIJI3NOEV1Ab1KMOyZLfntkD9VPckv3utND3KthYUdCDuEY8KCsznsrDk8s4cBmgVO7KW9LNZtPx6ulrLqK5M37uRPSnYUfMWcWfuXAMd6PBQZFnNcfsbEJ4-4LuHLkZ-hOy7Ys4GHthIyqEZxP-xfCrVsSwOlHQaeUQ44hnV-s72j_YsTiJI"
     
-    # Initialize with the 3 credentials
-    try:
-        dm = DropboxManager(APP_KEY, APP_SECRET, REFRESH_TOKEN)
-        
-        # Test command
-        dm.save_metadata_to_csv("/Nizar/sec_forms", "sec_forms_report.csv")
-    except Exception as e:
-        print(f"Failed to start: {e}")
+    dm = DropboxManager(TOKEN)
+    
+    # This will now create a CSV with columns: 
+    # folder_name, file_name, size_bytes, server_modified, path_display, id
+    dm.save_metadata_to_csv("/Nizar/sec_forms", "sec_forms_report.csv")
