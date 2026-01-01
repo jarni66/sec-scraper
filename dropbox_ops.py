@@ -1,5 +1,6 @@
 import dropbox
 import dropbox.files
+from dropbox import DropboxOAuth2FlowNoRedirect
 from dropbox.exceptions import ApiError, AuthError
 import os
 import csv
@@ -9,28 +10,70 @@ class DropboxManager:
     """
     A wrapper class for Dropbox API v2 operations.
     Covers: CRUD, Listing (Recursive & Non-Recursive), and Stream Uploading.
-    Now supports Long-Lived Sessions via Refresh Tokens.
+    Auto-handles Authentication using Refresh Tokens.
     """
 
-    def __init__(self, app_key, app_secret, refresh_token):
+    def __init__(self, app_key, app_secret, refresh_token=None):
         """
-        Initialize connection to Dropbox using a Refresh Token.
-        This connection will effectively never expire.
+        Initialize connection. 
+        If refresh_token is missing, it initiates the OAuth flow to generate one.
         """
+        self.app_key = app_key
+        self.app_secret = app_secret
+        
+        # 1. If no token provided, get one via user interaction
+        if not refresh_token:
+            print("\n[!] No Refresh Token provided. Starting First-Run Authorization...")
+            refresh_token = self._authorize_interactive()
+        
+        self.refresh_token = refresh_token
+
         try:
-            # Initialize with OAuth flow credentials
+            # 2. Connect using the Refresh Token
             self.dbx = dropbox.Dropbox(
-                app_key=app_key,
-                app_secret=app_secret,
-                oauth2_refresh_token=refresh_token
+                app_key=self.app_key,
+                app_secret=self.app_secret,
+                oauth2_refresh_token=self.refresh_token
             )
             
-            # Check if credentials are valid by getting current account info
+            # 3. Verify connection
             account = self.dbx.users_get_current_account()
             print(f"Connected to Dropbox as: {account.name.display_name}")
             
         except AuthError as e:
-            print("Error: Invalid Credentials (Check Key, Secret, or Refresh Token)")
+            print("Error: Authentication Failed. Your Refresh Token might be invalid.")
+            print("Try running without a refresh token to generate a new one.")
+            raise e
+
+    def _authorize_interactive(self):
+        """Helper to handle the OAuth handshake inside the script."""
+        auth_flow = DropboxOAuth2FlowNoRedirect(
+            self.app_key, 
+            self.app_secret, 
+            token_access_type='offline'
+        )
+
+        authorize_url = auth_flow.start()
+        
+        print(f"\n{'='*60}")
+        print("AUTHORIZATION REQUIRED")
+        print(f"{'='*60}")
+        print("1. Go to this URL: \n", authorize_url)
+        print("2. Click 'Allow' (Log in if needed).")
+        print("3. Copy the code starting with 'z...' and paste it below.")
+        print(f"{'='*60}\n")
+        
+        auth_code = input("Enter Auth Code: ").strip()
+        
+        try:
+            oauth_result = auth_flow.finish(auth_code)
+            new_token = oauth_result.refresh_token
+            print("\n[SUCCESS] New Refresh Token Generated!")
+            print(f"SAVE THIS TOKEN: {new_token}")
+            print("(Pass this token next time to skip this manual step)\n")
+            return new_token
+        except Exception as e:
+            print(f"Authorization failed: {e}")
             raise e
 
     # ==========================================
@@ -38,10 +81,7 @@ class DropboxManager:
     # ==========================================
 
     def get_all_files_metadata(self, folder_path, recursive=True):
-        """
-        Retrieves metadata for ALL files recursively.
-        Extracts 'folder_name' (immediate parent) for CSV grouping.
-        """
+        """Retrieves metadata for ALL files recursively."""
         print(f"Recursively scanning folder: {folder_path}...")
         files_data = []
         
@@ -54,10 +94,7 @@ class DropboxManager:
             def process_entries(entries):
                 for entry in entries:
                     if isinstance(entry, dropbox.files.FileMetadata):
-                        # Extract folder name from path (e.g., /Root/DateFolder/File -> DateFolder)
                         path_parts = entry.path_display.split('/')
-                        
-                        # The last part is filename, second to last is the folder name
                         folder_name = path_parts[-2] if len(path_parts) > 1 else ""
 
                         files_data.append({
@@ -71,7 +108,6 @@ class DropboxManager:
 
             process_entries(result.entries)
 
-            # Pagination
             while result.has_more:
                 print(f"Fetching more items... (Current count: {len(files_data)})")
                 result = self.dbx.files_list_folder_continue(result.cursor)
@@ -85,18 +121,13 @@ class DropboxManager:
             return []
 
     def save_metadata_to_csv(self, folder_path, output_csv="dropbox_files.csv"):
-        """
-        Wraps get_all_files_metadata and saves to CSV including folder_name.
-        """
+        """Wraps get_all_files_metadata and saves to CSV."""
         data = self.get_all_files_metadata(folder_path)
-        
         if not data:
             print("No data to save.")
             return
 
-        # Define explicit order for CSV columns
         fieldnames = ["folder_name", "file_name", "size_bytes", "server_modified", "path_display", "id"]
-        
         try:
             with open(output_csv, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -107,51 +138,18 @@ class DropboxManager:
             print(f"Error saving CSV: {e}")
 
     # ==========================================
-    # 2. OTHER METHODS
+    # 2. OPERATIONS (Create, Upload, etc.)
     # ==========================================
-
-    def list_immediate_contents(self, folder_path):
-        """Lists ONLY the immediate children (files and subfolders)."""
-        print(f"Listing immediate contents of: {folder_path}...")
-        items_data = []
-        try:
-            if folder_path == "/" or folder_path == ".": folder_path = ""
-            result = self.dbx.files_list_folder(folder_path, recursive=False)
-            
-            def process_entries(entries):
-                for entry in entries:
-                    item = {
-                        "name": entry.name,
-                        "type": "unknown",
-                        "path_display": entry.path_display,
-                        "id": entry.id
-                    }
-                    if isinstance(entry, dropbox.files.FileMetadata):
-                        item["type"] = "file"
-                    elif isinstance(entry, dropbox.files.FolderMetadata):
-                        item["type"] = "folder"
-                    items_data.append(item)
-
-            process_entries(result.entries)
-            while result.has_more:
-                result = self.dbx.files_list_folder_continue(result.cursor)
-                process_entries(result.entries)
-            return items_data
-        except ApiError as e:
-            print(f"Error listing: {e}")
-            return []
 
     def create_folder(self, dropbox_path):
         try:
             meta = self.dbx.files_create_folder_v2(dropbox_path)
-            print(f"Created folder: {meta.metadata.name}")
+            # print(f"Created folder: {meta.metadata.name}")
             return meta
         except ApiError as e:
-            # It's common for threads to try creating the same folder at the same time
-            # We catch it silently here if it already exists
+            # Swallow "Folder already exists" errors
             if isinstance(e.error, dropbox.files.CreateFolderError) and \
                e.error.is_path() and e.error.get_path().is_conflict():
-                # print(f"Folder already exists: {dropbox_path}")
                 return None
             print(f"Folder creation issue: {e}")
             return None
@@ -161,27 +159,8 @@ class DropboxManager:
             if hasattr(file_bytes, 'read'): data = file_bytes.read()
             else: data = file_bytes
             
-            # mode=overwrite handles both create and update
             meta = self.dbx.files_upload(data, dropbox_path, mode=dropbox.files.WriteMode("overwrite"))
             return meta
         except ApiError as e:
             print(f"Stream upload failed: {e}")
             return None
-
-# ==========================================
-# EXAMPLE USAGE
-# ==========================================
-if __name__ == "__main__":
-    # YOU MUST REPLACE THESE WITH YOUR VALUES
-    APP_KEY = "YOUR_APP_KEY"
-    APP_SECRET = "YOUR_APP_SECRET"
-    REFRESH_TOKEN = "YOUR_REFRESH_TOKEN" 
-    
-    # Initialize with the 3 credentials
-    try:
-        dm = DropboxManager(APP_KEY, APP_SECRET, REFRESH_TOKEN)
-        
-        # Test command
-        dm.save_metadata_to_csv("/Nizar/sec_forms", "sec_forms_report.csv")
-    except Exception as e:
-        print(f"Failed to start: {e}")
