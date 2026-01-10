@@ -164,3 +164,74 @@ class DropboxManager:
         except ApiError as e:
             print(f"Stream upload failed: {e}")
             return None
+        
+    def get_parquet_files(self, folder_path, output_csv="parquet_inventory.csv"):
+        """
+        Retrieves .parquet files and saves them to CSV immediately upon finding them.
+        """
+        print(f"Scanning for Parquet files in: {folder_path}...")
+        print(f"Progress will be saved to: {output_csv}")
+        
+        parquet_files = []
+        total_items_checked = 0
+        fieldnames = ["folder_name", "file_name", "size_bytes", "server_modified", "path_display", "id"]
+
+        try:
+            if folder_path == "/" or folder_path == ".": 
+                folder_path = ""
+
+            # Open the CSV file in write mode to start fresh
+            with open(output_csv, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+
+                result = self.dbx.files_list_folder(folder_path, recursive=True)
+                
+                def process_entries(entries):
+                    nonlocal total_items_checked
+                    for entry in entries:
+                        total_items_checked += 1
+                        
+                        if isinstance(entry, dropbox.files.FileMetadata):
+                            if entry.name.lower().endswith('.parquet'):
+                                # Prepare data
+                                path_parts = entry.path_display.split('/')
+                                folder_name = path_parts[-2] if len(path_parts) > 1 else ""
+                                
+                                row = {
+                                    "folder_name": folder_name,
+                                    "file_name": entry.name,
+                                    "path_display": entry.path_display,
+                                    "size_bytes": entry.size,
+                                    "server_modified": entry.server_modified.isoformat(),
+                                    "id": entry.id
+                                }
+
+                                # 1. Add to local list (memory)
+                                parquet_files.append(row)
+                                
+                                # 2. Write to CSV immediately (disk)
+                                writer.writerow(row)
+                                csvfile.flush() # Force write to disk
+                                
+                                print(f"  [SAVED] {entry.path_display}")
+
+                # Process first batch
+                process_entries(result.entries)
+
+                # Process continuation batches
+                while result.has_more:
+                    print(f"--- Scanned {total_items_checked} items so far... ---")
+                    result = self.dbx.files_list_folder_continue(result.cursor)
+                    process_entries(result.entries)
+
+            print(f"\n[FINISHED] Total items scanned: {total_items_checked}")
+            print(f"[FINISHED] CSV file finalized: {output_csv}")
+            return parquet_files
+
+        except ApiError as e:
+            print(f"Error scanning for Parquet files: {e}")
+            return parquet_files
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
+            return parquet_files
