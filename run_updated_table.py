@@ -8,7 +8,7 @@ import io
 from requests.exceptions import Timeout, RequestException
 # Import the DropboxManager from your dropbox_ops.py file
 from dropbox_ops import DropboxManager
-
+import os
 # --- CONFIGURATION ---
 EMAILS = [
     "nizar.rizax@gmail.com",
@@ -25,14 +25,39 @@ REFRESH_TOKEN = None
 # Initialize Dropbox Manager
 dbx_handler = DropboxManager(APP_KEY, APP_SECRET, REFRESH_TOKEN)
 
+def load_input_csv():
+    cik_file_list = os.listdir("cik_chunks")
+    all_result = []
+    for c in cik_file_list:
+        if "update" in c:
+            print(c)
+            try:
+                with open(f'cik_chunks/{c}', 'r') as file:
+                    data = json.load(file)
+                all_result += data
+            except:
+                print(f"Failed {c}")
+            
+    df_cik = pd.DataFrame(all_result)
+    df_cik = df_cik[df_cik['13f_rows'] != 0]
+    return df_cik
+
 def get_headers(email):
-    return {
+    headers = {
         'accept': '*/*',
-        'accept-language': 'en-US,en;q=0.9',
+        'accept-language': 'en-US,en;q=0.9,ko;q=0.8,id;q=0.7,de;q=0.6,de-CH;q=0.5',
         'origin': 'https://www.sec.gov',
+        'priority': 'u=1, i',
         'referer': 'https://www.sec.gov/',
+        'sec-ch-ua': '"Chromium";v="130", "Google Chrome";v="130", "Not?A_Brand";v="99"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'same-site',
         'user-agent': f'Mario bot project {email}',
     }
+    return headers
 
 def upload_dataframe_to_dropbox(df, cik_padded):
     """Converts dataframe to CSV bytes and uploads to Dropbox."""
@@ -84,11 +109,25 @@ def process_cik_item(item, emails):
             
             if response.status_code == 200:
                 form_result = response.json()
+                business_address = ""
+                mailing_address = ""
+                try:
+                    business_address = ', '.join([i for i in list(form_result['addresses']['business'].values()) if i ])
+                except:
+                    pass
                 
+                try:
+                    mailing_address = ', '.join([i for i in list(form_result['addresses']['mailing'].values()) if i ])
+                except:
+                    pass
                 # 1. Extract 13F Dataframe
                 df_13f = pd.DataFrame()
                 if 'filings' in form_result and 'recent' in form_result['filings']:
                     df_all = pd.DataFrame(form_result['filings']['recent'])
+                    df_all['cik'] = cik_raw
+                    df_all['business_address'] = business_address
+                    df_all['mailing_address'] = mailing_address
+                    
                     if not df_all.empty and 'form' in df_all.columns:
                         # Filter for all 13F variations (13F-HR, 13F-NT, etc.)
                         df_13f = df_all[df_all['form'].str.contains('13F', na=False)].copy()
@@ -132,7 +171,7 @@ def main():
 
     # 1. Load the CSV
     try:
-        df_input = pd.read_csv(args.input_csv)
+        df_input = load_input_csv()
         if 'cik' not in df_input.columns:
             print("Error: The CSV file must have a column named 'cik'.")
             return

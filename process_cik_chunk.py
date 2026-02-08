@@ -85,7 +85,16 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("input_file")
     args = parser.parse_args()
-
+    
+    file_part = args.input_file.replace('.json','').split('_')[-1]
+    print("File Part: ", file_part)
+    existing_file = f"cik_update_part_{file_part}.json"
+    
+    with open(f'cik_chunks/{existing_file}', 'r') as file:
+        existing_data = json.load(file)\
+            
+    cik_data = [i.get('cik') for i in existing_data]
+    
     if not os.path.exists(args.input_file):
         print(f"File {args.input_file} not found.")
         return
@@ -99,11 +108,35 @@ def main():
     output_failed = f"cik_chunks/failed_part_{part_number}.json"
 
     with open(args.input_file, 'r') as f:
-        data = json.load(f)
+        data_input = json.load(f)
 
-    success_list = []
-    failed_list = []
+    # with open("cik_data.json", "r", encoding="utf-8") as f:
+    #     cik_data = json.load(f)
+        
+    data = []
+    for d in data_input:
+        if d.get("cik") not in cik_data:
+            data.append(d)
+    
+    # success_list = []
+    if os.path.exists(output_success):
+        with open(output_success, "r", encoding="utf-8") as f:
+            success_list = json.load(f)
 
+    else:
+        success_list = []
+        
+    print(f"SUCCCESS LIST: {len(success_list)} ")
+    
+    # failed_list = []
+    if os.path.exists(output_failed):
+        with open(output_failed, "r", encoding="utf-8") as f:
+            failed_list = json.load(f)
+
+    else:
+        failed_list = []
+    print(f"FAILED LIST: {len(success_list)} ")
+    
     print(f"Processing {len(data)} records from {base_name}...")
     
     try:
@@ -120,13 +153,13 @@ def main():
             
             
             # Save Successes
-            with open(output_success, 'w') as f:
-                json.dump(success_list, f, indent=4)
+            with open(output_success, 'w', encoding='utf-8') as f:
+                json.dump(success_list, f, indent=4, ensure_ascii=True)
                 
                 
             # Save Failures (if any)
             if failed_list:
-                with open(output_failed, 'w') as f:
+                with open(output_failed, 'w', encoding='utf-8') as f:
                     json.dump(failed_list, f, indent=4)
                 print(f"Saved {len(failed_list)} failures to {output_failed}")
 

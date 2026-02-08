@@ -3,6 +3,8 @@
 venv/
 cik_chunks/
 pending_chunks/
+Nizar/
+temp_cik/
 # Environment variables
 .env
 .env.*

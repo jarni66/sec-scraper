@@ -154,6 +154,18 @@ class DropboxManager:
             print(f"Folder creation issue: {e}")
             return None
 
+    def download_file(self, dropbox_path):
+        """
+        Downloads a file and returns the metadata and the raw response.
+        The response object can be read directly into Pandas.
+        """
+        try:
+            metadata, response = self.dbx.files_download(dropbox_path)
+            return metadata, response
+        except ApiError as e:
+            print(f"Error downloading {dropbox_path}: {e}")
+            return None, None
+
     def upload_stream(self, file_bytes, dropbox_path):
         try:
             if hasattr(file_bytes, 'read'): data = file_bytes.read()

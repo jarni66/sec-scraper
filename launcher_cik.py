@@ -36,7 +36,7 @@ def launch_workers(start_range, end_range):
 
 if __name__ == "__main__":
     # --- CONFIGURATION ---
-    START_PART = 2
+    START_PART = 1
     END_PART = 11
     # ---------------------
 
