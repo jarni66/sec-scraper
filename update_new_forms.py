@@ -2,7 +2,7 @@ import pandas as pd
 import io
 import runner_acsn
 from dropbox_ops import DropboxManager
-
+import json
 # --- CONFIGURATION ---
 # Use your actual keys and tokens here
 APP_KEY = "dtm7p8v46wtwjh7"
@@ -68,11 +68,19 @@ def main():
     # Filter for CSV files
     csv_files = [f for f in all_files if f['file_name'].lower().endswith('.csv')]
     
+    with open(f"priority_ciks_feb.json", "r", encoding="utf-8") as f:
+        priority_ciks_feb = json.load(f)
+
+
     print(f"Found {len(csv_files)} CSV files in Dropbox.\n")
 
     for file_info in csv_files:
         path = file_info['path_display']
         name = file_info['file_name']
+
+        cik_ = name.split('.')[0]
+        # if cik_ not in priority_ciks_feb:
+        #     continue
         
         print(f"Downloading stream: {name}...")
         

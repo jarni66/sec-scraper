@@ -16,20 +16,71 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import io
 
-headers = {
-        'accept': '*/*',
-        'accept-language': 'en-US,en;q=0.9,ko;q=0.8,id;q=0.7,de;q=0.6,de-CH;q=0.5',
-        'origin': 'https://www.sec.gov',
-        'priority': 'u=1, i',
-        'referer': 'https://www.sec.gov/',
-        'sec-ch-ua': '"Chromium";v="130", "Google Chrome";v="130", "Not?A_Brand";v="99"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': '"Windows"',
-        'sec-fetch-dest': 'empty',
-        'sec-fetch-mode': 'cors',
-        'sec-fetch-site': 'same-site',
-        'user-agent': 'Mario bot project nizar.rizax@gmail.com',
-    }
+# Emails used to rotate User-Agent on each retry (SEC requires contact in user-agent).
+EMAILS = [
+    "nizar.rizax@gmail.com",
+    "project.mario.1@example.com",
+    "data.fetcher.pro@example.com",
+    "research.bot@example.com",
+]
+
+# Base headers; user-agent is overridden per attempt in sec_get().
+HEADERS_BASE = {
+    "accept": "*/*",
+    "accept-language": "en-US,en;q=0.9,ko;q=0.8,id;q=0.7,de;q=0.6,de-CH;q=0.5",
+    "origin": "https://www.sec.gov",
+    "priority": "u=1, i",
+    "referer": "https://www.sec.gov/",
+    "sec-ch-ua": '"Chromium";v="130", "Google Chrome";v="130", "Not?A_Brand";v="99"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-site",
+}
+
+# Default number of retries and sleep increment (seconds) between retries.
+SEC_REQUEST_MAX_RETRIES = 5
+SEC_REQUEST_SLEEP_INCREMENT = 10
+
+
+def _headers_for_attempt(attempt_index: int) -> dict:
+    """Build headers with user-agent from EMAILS for this attempt (rotates on retries)."""
+    h = HEADERS_BASE.copy()
+    email = EMAILS[attempt_index % len(EMAILS)]
+    h["user-agent"] = f"Mario bot project {email}"
+    return h
+
+
+def sec_get(url: str, max_retries: int = SEC_REQUEST_MAX_RETRIES) -> requests.Response:
+    """
+    GET with retries: on each retry sleep (attempt * SLEEP_INCREMENT) seconds
+    and use the next user-agent from EMAILS. Retries on connection errors,
+    429, and 5xx. Returns the last response; raises the last exception if all
+    attempts failed with an exception.
+    """
+    last_response = None
+    last_exception = None
+    for attempt in range(max_retries):
+        if attempt > 0:
+            sleep_sec = attempt * SEC_REQUEST_SLEEP_INCREMENT
+            print(f"  Retry {attempt}/{max_retries - 1} after {sleep_sec}s (user-agent: {EMAILS[attempt % len(EMAILS)]})")
+            time.sleep(sleep_sec)
+        h = _headers_for_attempt(attempt)
+        try:
+            resp = requests.get(url, headers=h, timeout=60)
+            last_response = resp
+            if resp.status_code == 200:
+                return resp
+            if 400 <= resp.status_code < 500 and resp.status_code != 429:
+                return resp
+        except requests.RequestException as e:
+            last_exception = e
+    if last_response is not None:
+        return last_response
+    if last_exception is not None:
+        raise last_exception
+    return last_response
 
 class ProcessACSN:
     def __init__(self, row : dict, dbx_manager):
@@ -147,7 +198,7 @@ class ProcessACSN:
 
 
     def check_value_multiplies(self,url):
-        response = requests.get(url, headers=headers)
+        response = sec_get(url)
         if response.status_code == 200:
             text_body = response.text
             match = re.search(r'x\$(\d+)', text_body)
@@ -165,7 +216,7 @@ class ProcessACSN:
 
     def get_html_info_table(self):
         url = f"https://www.sec.gov/Archives/edgar/data/{self.cik}/{self.acsn.replace('-','')}/{self.acsn}-index.html"
-        response = requests.get(url, headers=headers)
+        response = sec_get(url)
         result = {
             "info_html" : "",
             "complete_txt" :""
@@ -634,7 +685,7 @@ class ProcessACSN:
     def get_info_table(self):
         self.record['raw_txt'] = ''
         url_text = self.full_txt_url
-        response = requests.get(url_text, headers=headers)
+        response = sec_get(url_text)
         if response.status_code == 200:
             text_body = response.text
             raw_path = f"{self.raw_path}/{self.file_prefix}.txt"
